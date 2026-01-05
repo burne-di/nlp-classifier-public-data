@@ -1,27 +1,27 @@
 # Arquitectura del Sistema NLP Classifier
 
-**Versión:** 0.2.0
-**Última actualización:** Enero 2026
+**Version:** 0.2.0  
+**Ultima actualizacion:** Enero 2026
 
 ---
 
 ## Resumen Ejecutivo
 
-**NLP Classifier** es un sistema de clasificación de texto híbrido diseñado para procesar noticias económicas y financieras en español. Combina la velocidad y eficiencia de costos de un modelo Transformer local (Fast Path) con la capacidad de razonamiento de un Large Language Model (Slow Path) para casos de baja confianza.
+**NLP Classifier** es un sistema de clasificacion hibrida para noticias economicas y financieras en espanol. Combina un modelo Transformer local (baja latencia y bajo costo) con un LLM externo como fallback cuando la confianza del modelo es baja. El objetivo es maximizar precision sin disparar costos operativos.
 
-**Stack Tecnológico:**
-- **Backend:** FastAPI, Python 3.11+
-- **Model Core:** PyTorch, Transformers (Hugging Face)
-- **LLM Providers:** Anthropic (Claude), Groq (Llama 3), OpenAI (GPT-4)
-- **MLOps:** MLflow, Docker
-- **Infrastructure:** GPU/CPU support
+**Stack Tecnologico:**
+- **Backend:** FastAPI, Pydantic, Python 3.11+
+- **Modelo local:** PyTorch + Transformers (Hugging Face)
+- **LLM Providers:** Groq, OpenAI, Anthropic (opcionales)
+- **MLOps:** MLflow + artefactos locales
+- **Contenedores:** Docker + Docker Compose
 
-**Características Principales:**
-- Arquitectura Híbrida (Modelo Local + LLM Fallback)
-- Detección automática de confianza
-- Estimación de costos en tiempo real
-- Soporte multiproveedor de LLMs
-- API REST con modos simple y batch
+**Caracteristicas Principales:**
+- Arquitectura hibrida (modelo local + LLM fallback)
+- Umbral de confianza configurable
+- Estimacion de costo por request en modo hibrido
+- Endpoints batch y single
+- Training bloqueante via endpoint controlado
 
 ---
 
@@ -29,218 +29,276 @@
 
 ```
 nlp-classifier-public-data/
-├── packages/
-│   └── classifier_core/          # Núcleo de lógica de ML
-│       ├── __init__.py
-│       ├── config.py             # Configuración y settings
-│       ├── model.py              # Wrapper de Hugging Face
-│       ├── hybrid_classifier.py  # Lógica de decisión híbrida
-│       ├── llm_client.py         # Clientes para APIs de LLM
-│       ├── data.py               # Procesamiento de datos y tokenización
-│       ├── train.py              # Loop de entrenamiento
-│       └── metrics.py            # Cálculo de métricas
-├── services/
-│   └── api/                      # API REST
-│       ├── __init__.py
-│       ├── main.py               # Aplicación FastAPI
-│       ├── schemas.py            # Modelos Pydantic (Request/Response)
-│       └── deps.py               # Inyección de dependencias
-├── scripts/                      # Scripts de utilidad CLI
-│   ├── train.py                  # Script de entrenamiento
-│   ├── evaluate.py               # Script de evaluación
-│   └── prepare_data.py           # Script de limpieza de datos
-├── models/                       # Artefactos de modelos guardados
-├── mlruns/                       # Tracking de MLflow
-├── notebooks/                    # Notebooks de exploración
-├── docker-compose.yml
-└── pyproject.toml
+  .github/
+    workflows/
+      ci.yml
+  data/
+    raw/                      # CSV crudo (fuente)
+    processed/
+      train.csv
+      val.csv
+      test.csv
+      extra_train.csv         # dataset extra opcional
+  docs/
+    cost_analysis.md
+    dataset_sources.md
+    decisions.md
+    model_card.md
+  mlruns/                     # MLflow artifacts (generado)
+  models/                     # modelos entrenados (generado)
+  notebooks/
+  packages/
+    classifier_core/
+      __init__.py
+      config.py               # Settings, labels, paths
+      data.py                 # carga y tokenizacion
+      model.py                # wrapper HF
+      metrics.py              # metricas
+      train.py                # training utilities
+      llm_client.py           # LLM providers
+      hybrid_classifier.py    # decision hibrida
+  scripts/
+    prepare_data.py           # limpieza y split
+    train.py                  # entrenamiento con MLflow
+    evaluate.py               # evaluacion offline
+  services/
+    api/
+      deps.py                 # DI, carga de modelo
+      main.py                 # FastAPI app
+      schemas.py              # Pydantic schemas
+  tests/
+    test_api.py
+    test_data.py
+  .env
+  .env.example
+  Dockerfile
+  docker-compose.yml
+  pyproject.toml
+  README.md
+  ARCHITECTURE.md
 ```
 
 ---
 
 ## Componentes del Sistema
 
-### 1. Configuración (`packages/classifier_core/config.py`)
-
-**Propósito:** Gestión centralizada de configuración usando `pydantic-settings`.
-
-**Responsabilidades:**
-- Cargar variables de entorno (`.env`).
-- Definir rutas de directorios importantes (`data/`, `models/`).
-- Mapear etiquetas a IDs (`LABEL2ID`, `ID2LABEL`).
-- Configurar hiperparámetros por defecto.
-
----
-
-### 2. Modelo Local (`packages/classifier_core/model.py`)
-
-**Propósito:** Manejo del modelo Transformer local (BERT/RoBERTa).
-
-**Clases:**
-
-| Clase | Descripción |
-|-------|-------------|
-| `TextClassifier` | Wrapper de alto nivel para inferencia. Maneja tokenización, movimiento a GPU/CPU y post-procesamiento de logits. |
-
-**Funciones Clave:**
-- `load_pretrained_model()`: Carga un modelo base para fine-tuning.
-- `load_trained_model()`: Carga un modelo y tokenizador ya entrenados desde disco.
-- `predict(text)`: Retorna etiqueta y confianza para un solo texto.
-- `predict_batch(texts)`: Inferencia optimizada para listas de textos.
-
----
-
-### 3. Cliente LLM (`packages/classifier_core/llm_client.py`)
-
-**Propósito:** Abstracción unificada para diferentes proveedores de LLM.
-
-**Diseño:**
-Usa el patrón **Strategy** (o Factory) para intercambiar proveedores sin cambiar el código cliente.
-
-**Proveedores Soportados:**
-1.  **ClaudeClient (Anthropic):** Optimizado para `claude-3-haiku`.
-2.  **OpenAIClient:** Compatible con OpenAI GPT-4o.
-3.  **GroqClient:** Implementación de alta velocidad usando Llama 3 via Groq API.
-
-**Cálculo de Costos:**
-Cada cliente calcula el costo estimado de la llamada en USD basándose en los tokens de entrada y salida definidos en constantes (ej. `INPUT_COST_PER_1M`).
-
----
-
-### 4. Clasificador Híbrido (`packages/classifier_core/hybrid_classifier.py`)
-
-**Propósito:** Orquestador principal de la lógica de decisión "Fast Path vs Slow Path".
-
-**Algoritmo de Decisión:**
+### 1. Configuracion (packages/classifier_core/config.py)
+**Proposito:** gestion centralizada de settings y mapeo de labels.  
+**Librerias:** pydantic_settings, functools.lru_cache  
+**Clase principal:** `Settings`
 
 ```python
-def classify(self, text):
-    # Paso 1: Predicción Modelo Local
-    result = self.model.predict(text)
-    
-    # Paso 2: Evaluación de Confianza
-    if result.confidence >= umbral:
-        return result (Source: "model")
-        
-    # Paso 3: Fallback a LLM
-    if llm_enabled:
-        llm_result = self.llm.classify(text)
-        return llm_result (Source: "llm")
-        
-    return result (Con advertencia de baja confianza)
+class Settings(BaseSettings):
+    model_name: str = "distilbert-base-multilingual-cased"
+    max_length: int = 512
+    num_labels: int = 7
+    batch_size: int = 16
+    learning_rate: float = 2e-5
 ```
 
-**Métricas y Estadísticas:**
-Mantiene un objeto `ClassificationStats` que rastrea:
-- Ratio de uso del modelo vs LLM.
-- Costo total acumulado.
-- Latencia promedio por fuente.
+**Integracion:** toda la app accede via `get_settings()` (singleton).
 
 ---
 
-### 5. API REST (`services/api/`)
-
-**Propósito:** Interfaz de comunicación externa construida con FastAPI.
-
-**Endpoints Principales:**
-
-| Método | Endpoint | Descripción |
-|--------|----------|-------------|
-| `POST` | `/predict` | Inferencia simple (solo modelo local). Rápido y determinista. |
-| `POST` | `/predict/hybrid` | Inferencia híbrida. Puede invocar al LLM si es necesario. Retorna metadatos de costo y fuente. |
-| `POST` | `/predict/hybrid/batch` | Versión batch del endpoint híbrido. |
-| `GET` | `/stats` | Retorna estadísticas de uso actuales (hit rate, costos). |
-| `GET` | `/health` | Chequeo de estado del sistema y carga de modelos. |
-
-**Gestión de Ciclo de Vida (`lifespan`):**
-Carga el modelo pesado en memoria **una sola vez** al iniciar la aplicación, compartiendo la instancia entre peticiones para eficiencia.
+### 2. Datos y Split (data.py + scripts/prepare_data.py)
+**Proposito:** limpiar, validar y generar splits estratificados.  
+**Entradas:** CSV crudo con columnas `news` y `Type`.  
+**Salida:** `train.csv`, `val.csv`, `test.csv`.  
+**Nota:** si existe `extra_train.csv`, se concatena al train en runtime.
 
 ---
 
-## Flujo de Datos
+### 3. Modelo Local (model.py)
+**Proposito:** inferencia con Transformer fine-tuned.  
+**Clase principal:** `TextClassifier`  
+**Responsabilidades:**
+- Tokenizar a `max_length` fijo
+- Ejecutar inferencia en CPU/GPU
+- Calcular softmax y confianza
 
+---
+
+### 4. Entrenamiento (train.py + scripts/train.py)
+**Proposito:** fine-tuning del modelo con HF Trainer y early stopping.  
+**Algoritmo:**
+1. Carga dataset tokenizado
+2. Entrena con `TrainingArguments`
+3. Evalua en validation y test
+4. Guarda `final_model/` y registra en MLflow
+
+---
+
+### 5. Metricas (metrics.py)
+**Proposito:** calcular accuracy y macro F1/precision/recall.  
+**Uso:** HF Trainer y scripts de evaluacion offline.
+
+---
+
+### 6. LLM Client (llm_client.py)
+**Proposito:** interfaz unificada para proveedores LLM.  
+**Clases:** `ClaudeClient`, `OpenAIClient`, `GroqClient`.  
+**Detalles:**
+- Prompt fijo con 7 categorias
+- Parseo defensivo de etiquetas
+- Estimacion de costo por tokens
+
+---
+
+### 7. Clasificador Hibrido (hybrid_classifier.py)
+**Proposito:** decidir si usar modelo local o LLM.  
+**Algoritmo (simplificado):**
+
+```text
+predict_local(text) -> (label, confidence)
+if confidence >= threshold:
+  return model result
+if llm_enabled:
+  return llm result
+return model result (low confidence)
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    API Request (Hybrid)                      │
-├─────────────────────────────────────────────────────────────┤
-│                                                             │
-│   User Layout                                               │
-│       │                                                     │
-│       ▼                                                     │
-│   ┌───────────────┐                                         │
-│   │ FastAPI Router│                                         │
-│   └──────┬────────┘                                         │
-│          │                                                  │
-│          ▼                                                  │
-│   ┌────────────────────┐                                    │
-│   │ HybridClassifier   │                                    │
-│   └──────┬─────────────┘                                    │
-│          │                                                  │
-│          ▼                                                  │
-│   ┌────────────────────┐    Confianza > 0.75?               │
-│   │ Local Transformer  │──────────────────────────┐         │
-│   │ (GPU/CPU)          │           SI             │         │
-│   └─────────┬──────────┘                          │         │
-│             │ NO                                  │         │
-│             ▼                                     │         │
-│   ┌────────────────────┐                          │         │
-│   │ LLM Client         │                          │         │
-│   │ (Anthropic/Groq)   │                          ▼         │
-│   └─────────┬──────────┘                  ┌──────────────┐  │
-│             │                             │  Response    │  │
-│             └────────────────────────────▶│  JSON        │  │
-│                                           └──────────────┘  │
-└─────────────────────────────────────────────────────────────┘
+
+**Stats:** ratio modelo vs LLM, costo acumulado, latencias promedio.
+
+---
+
+### 8. API REST (services/api)
+**Proposito:** interfaz externa de inferencia y entrenamiento.  
+**Endpoints principales:**
+- `POST /predict` (modelo local)
+- `POST /predict/batch`
+- `POST /predict/hybrid`
+- `POST /predict/hybrid/batch`
+- `GET /health`
+- `GET /stats` + `POST /stats/reset`
+- `POST /train` (bloqueante, con token)
+
+**Lifespans:** carga el modelo una sola vez al inicio.
+
+---
+
+### 9. Tracking (mlruns/)
+**Proposito:** MLflow registra parametros, metricas y artefactos.  
+**Almacen:** local, sin dependencia cloud.
+
+---
+
+### 10. Docker y Compose
+**Proposito:** estandarizar runtime y despliegue.  
+**Servicios:** `api` + `mlflow`.
+
+---
+
+## Flujo de Datos End-to-End
+
+### Entrenamiento (batch)
+```
+Raw CSV -> scripts/prepare_data.py -> data/processed/*.csv
+                           |
+                           v
+                    scripts/train.py
+                           |
+        +------------------+------------------+
+        |                                     |
+     mlruns/ (MLflow)                 models/run_*/final_model
+```
+
+### Inferencia simple (sync)
+```
+Client -> POST /predict -> FastAPI -> TextClassifier -> label + confidence
+```
+
+### Inferencia hibrida (sync)
+```
+Client -> POST /predict/hybrid -> HybridClassifier
+  -> local model (confidence)
+     -> if >= threshold: response(model)
+     -> else: response(LLM) if enabled
 ```
 
 ---
 
-## Configuración de Producción
+## Configuracion de Produccion
 
-### Docker Compose
+### Variables de Entorno (.env)
+- `MODEL_PATH`: ruta del modelo cargado por la API
+- `CONFIDENCE_THRESHOLD`: umbral de fallback
+- `LLM_PROVIDER`: groq | openai | anthropic
+- `GROQ_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`
+- `TRAINING_ENABLED`: habilita `/train`
+- `TRAINING_TOKEN`: token simple para `/train`
+- Hiperparametros: `BATCH_SIZE`, `LEARNING_RATE`, `NUM_EPOCHS`, etc.
 
-El sistema está contenerizado para facilitar el despliegue.
-
+### Docker Compose (resumen)
 ```yaml
 services:
   api:
-    image: nlp-classifier-api
+    build: .
     ports: ["8000:8000"]
-    environment:
-      - CONFIDENCE_THRESHOLD=0.75
-      - LLM_PROVIDER=groq
-      - GROQ_API_KEY=${GROQ_API_KEY}
+    env_file: .env
     volumes:
-      - ./models:/app/models:ro  # Comparte modelos entrenados
-
+      - ./models:/app/models:ro
   mlflow:
-    image: ghcr.io/mlflow/mlflow
+    image: mlflow/mlflow:latest
     ports: ["5000:5000"]
-    command: mlflow server ...
 ```
 
-### Variables de Entorno Clave
+---
 
-- `CONFIDENCE_THRESHOLD`: (float) Umbral 0.0-1.0 para activar el LLM.
-- `LLM_PROVIDER`: `anthropic`, `openai`, `groq`.
-- `MODEL_PATH`: Ruta al directorio del modelo entrenado.
+## Dependencias
+
+### Core
+- fastapi, uvicorn
+- torch, transformers, datasets
+- pydantic, pydantic-settings
+- scikit-learn, pandas
+- mlflow
+
+### LLM Providers
+- openai (compatible)
+- anthropic
+
+### Dev
+- pytest, httpx
+- ruff
 
 ---
 
-## Métricas de Performance Estimadas
-
-| Métrica | Local (Transformer) | LLM (Groq Llama 3) | LLM (Claude Haiku) |
-|---------|---------------------|--------------------|--------------------|
-| Latencia| ~20-50ms            | ~500ms - 1s        | ~1s - 2s           |
-| Costo   | Despreciable (CPU)  | Muy bajo           | Medio              |
-| Precisión| Alta (en dominio)  | Muy Alta (General) | Muy Alta (General) |
+## Seguridad y Validaciones
+- Pydantic valida formatos y longitudes de input.
+- `/train` requiere `TRAINING_ENABLED=true` y token opcional.
+- No hay auth para inferencia ni rate limiting.
+- Riesgos: prompt injection y uso no controlado de LLM.
 
 ---
 
-## Patrones de Diseño Utilizados
+## Observabilidad
+- Logs en consola del contenedor.
+- `/health` para estado del modelo.
+- `/stats` para ratio de fallback y costos.
+- MLflow para metricas y artefactos de training.
 
-1.  **Strategy Pattern**: En `llm_client.py` para intercambiar proveedores de IA.
-2.  **Singleton (via Dependency Injection)**: En FastAPI para mantener el modelo cargado en memoria.
-3.  **Fallback Pattern**: En `HybridClassifier` para degradar elegantemente del modelo local al LLM.
-4.  **Repository/DAO**: Implícito en `data.py` (Dataset loading).
+---
 
+## Performance y Escalabilidad
+- Cuello de botella: inferencia CPU y max_length=512.
+- LLM fallback agrega latencia de red.
+- Escalar x10: replicas horizontales y cache; separar training de API.
+
+---
+
+## Testing y Calidad
+- `tests/test_api.py`: validaciones basicas de endpoints.
+- `tests/test_data.py`: estructura de datos y labels.
+- Faltantes: training end-to-end, LLM fallback, docker-compose.
+
+---
+
+## Archivos o Componentes Auxiliares
+- `mlruns/` y `models/`: artefactos generados.
+- `notebooks/`: exploracion, no runtime.
+- `extra_train.csv`: dataset opcional para refuerzo.
+
+---
+
+## Conclusion
+El sistema es un MVP solido con elementos de produccion (API, Docker, CI, MLflow). Destaca por el enfoque hibrido y control de costos, pero requiere endurecimiento para entornos abiertos (auth, rate limiting, aislamiento de training) y mas data para mejorar generalizacion.

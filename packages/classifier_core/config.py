@@ -4,7 +4,7 @@ from pathlib import Path
 from functools import lru_cache
 
 from pydantic import Field, computed_field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -12,6 +12,12 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
     # Model settings
     model_name: str = Field(default="distilbert-base-multilingual-cased")
@@ -59,9 +65,6 @@ class Settings(BaseSettings):
         """Models directory."""
         return PROJECT_ROOT / "models"
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
 
 
 # Label mappings

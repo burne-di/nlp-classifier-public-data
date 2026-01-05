@@ -15,6 +15,12 @@ def load_splits(processed_dir: Path | None = None) -> DatasetDict:
     processed_dir = processed_dir or settings.data_processed_dir
 
     train_df = pd.read_csv(processed_dir / "train.csv")
+
+    extra_train_path = processed_dir / "extra_train.csv"
+    if extra_train_path.exists():
+        extra_df = pd.read_csv(extra_train_path)
+        train_df = pd.concat([train_df, extra_df], ignore_index=True)
+
     val_df = pd.read_csv(processed_dir / "val.csv")
     test_df = pd.read_csv(processed_dir / "test.csv")
 

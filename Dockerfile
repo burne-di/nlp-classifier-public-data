@@ -14,6 +14,7 @@ COPY README.md .
 
 COPY packages/ packages/
 COPY services/ services/
+COPY scripts/ scripts/
 COPY data/processed/ data/processed/
 
 # Install Python dependencies

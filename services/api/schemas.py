@@ -57,6 +57,25 @@ class BatchHybridPredictResponse(BaseModel):
     predictions: list[HybridPredictResponse] = Field(..., description="List of predictions")
 
 
+class TrainRequest(BaseModel):
+    """Request schema for training endpoint."""
+
+    epochs: int | None = Field(None, ge=1, le=20, description="Number of training epochs")
+    batch_size: int | None = Field(None, ge=1, le=256, description="Training batch size")
+    lr: float | None = Field(None, gt=0, lt=1, description="Learning rate")
+
+
+class TrainResponse(BaseModel):
+    """Response schema for training endpoint."""
+
+    status: str = Field(..., description="Training status")
+    exit_code: int = Field(..., description="Process exit code")
+    duration_seconds: float = Field(..., description="Training duration in seconds")
+    model_path: str | None = Field(None, description="Saved model path if available")
+    stdout_tail: str | None = Field(None, description="Last lines of stdout")
+    stderr_tail: str | None = Field(None, description="Last lines of stderr")
+
+
 class HealthResponse(BaseModel):
     """Response schema for health endpoint."""
 
